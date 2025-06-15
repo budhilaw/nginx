@@ -5,6 +5,37 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to deploy'
+        required: true
+        default: 'main'
+        type: choice
+        options:
+          - main
+          - master
+          - develop
+          - staging
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+          - development
+      force_rebuild:
+        description: 'Force rebuild without cache'
+        required: false
+        default: false
+        type: boolean
+      skip_tests:
+        description: 'Skip validation steps'
+        required: false
+        default: false
+        type: boolean
 
 env:
   REGISTRY: ghcr.io
@@ -20,6 +51,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.inputs.branch || github.ref }}
 
     - name: Log in to Container Registry
       uses: docker/login-action@v3
@@ -38,6 +71,13 @@ jobs:
           type=ref,event=pr
           type=sha,prefix={{branch}}-
           type=raw,value=latest,enable={{is_default_branch}}
+          type=raw,value=${{ github.event.inputs.environment || 'latest' }},enable=${{ github.event_name == 'workflow_dispatch' }}
+
+    - name: Validate nginx configuration
+      if: ${{ !github.event.inputs.skip_tests }}
+      run: |
+        # Test nginx configuration syntax
+        docker run --rm -v $PWD/nginx.conf:/etc/nginx/nginx.conf:ro -v $PWD/default.conf:/etc/nginx/conf.d/default.conf:ro nginx:alpine nginx -t
 
     - name: Build and push Docker image
       uses: docker/build-push-action@v5
@@ -46,39 +86,94 @@ jobs:
         push: true
         tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
+        no-cache: ${{ github.event.inputs.force_rebuild == 'true' }}
 
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    if: |
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
     
     steps:
-    - name: Deploy to production
+    - name: Set deployment target
+      id: target
+      run: |
+        if [ "${{ github.event.inputs.environment }}" = "staging" ]; then
+          echo "host=${{ secrets.STAGING_HOST || secrets.HOST }}" >> $GITHUB_OUTPUT
+          echo "user=${{ secrets.STAGING_USERNAME || secrets.USERNAME }}" >> $GITHUB_OUTPUT
+          echo "port=${{ secrets.STAGING_SSH_PORT || secrets.SSH_PORT }}" >> $GITHUB_OUTPUT
+          echo "container_name=nginx-staging" >> $GITHUB_OUTPUT
+        else
+          echo "host=${{ secrets.HOST }}" >> $GITHUB_OUTPUT
+          echo "user=${{ secrets.USERNAME }}" >> $GITHUB_OUTPUT
+          echo "port=${{ secrets.SSH_PORT }}" >> $GITHUB_OUTPUT
+          echo "container_name=nginx" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Deploy to ${{ github.event.inputs.environment || 'production' }}
       uses: appleboy/ssh-action@v1.0.0
       with:
-        host: ${{ secrets.HOST }}
-        username: ${{ secrets.USERNAME }}
+        host: ${{ steps.target.outputs.host }}
+        username: ${{ steps.target.outputs.user }}
         key: ${{ secrets.SSH_KEY }}
-        port: ${{ secrets.SSH_PORT }}
+        port: ${{ steps.target.outputs.port }}
         script: |
+          # Login to GHCR (using a token with read:packages permission)
+          echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          
+          # Determine image tag
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            IMAGE_TAG="${{ github.event.inputs.environment || 'latest' }}"
+          else
+            IMAGE_TAG="latest"
+          fi
+          
           # Pull the latest image
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}
           
           # Stop and remove existing container
-          docker stop nginx || true
-          docker rm nginx || true
+          docker stop ${{ steps.target.outputs.container_name }} || true
+          docker rm ${{ steps.target.outputs.container_name }} || true
           
           # Create network if it doesn't exist
           docker network create portfolio-network || true
           
+          # Set ports based on environment
+          if [ "${{ github.event.inputs.environment }}" = "staging" ]; then
+            PORTS="-p 8080:80 -p 8443:443"
+          else
+            PORTS="-p 80:80 -p 443:443"
+          fi
+          
           # Run new container
           docker run -d \
-            --name nginx \
+            --name ${{ steps.target.outputs.container_name }} \
             --restart unless-stopped \
-            -p 80:80 \
-            -p 443:443 \
+            ${PORTS} \
             --network portfolio-network \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}
           
           # Clean up old images
-          docker image prune -f 
+          docker image prune -f
+          
+          # Logout for security
+          docker logout ghcr.io
+
+  notify:
+    needs: [build, deploy]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+    - name: Notify deployment result
+      run: |
+        if [ "${{ needs.deploy.result }}" = "success" ]; then
+          echo "✅ Nginx deployment to ${{ github.event.inputs.environment || 'production' }} successful!"
+          echo "Branch: ${{ github.event.inputs.branch || github.ref_name }}"
+          echo "Environment: ${{ github.event.inputs.environment || 'production' }}"
+        else
+          echo "❌ Nginx deployment failed!"
+          echo "Branch: ${{ github.event.inputs.branch || github.ref_name }}"
+          echo "Environment: ${{ github.event.inputs.environment || 'production' }}"
+        fi 
