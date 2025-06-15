@@ -139,8 +139,31 @@ jobs:
             IMAGE_TAG="latest"
           fi
           
-          # Pull the latest image (no auth needed for public packages)
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}
+          # Set non-interactive mode for Docker
+          export DOCKER_CLI_HINTS=false
+          export DOCKER_BUILDKIT=1
+          
+          # Check if image exists locally first
+          echo "Checking for existing image..."
+          if docker images --format "table {{.Repository}}:{{.Tag}}" | grep -q "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}"; then
+            echo "Image already exists locally, removing old version..."
+            docker rmi ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG} || true
+          fi
+          
+          # Pull the latest image with timeout and retry
+          echo "Pulling image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}"
+          timeout 300 docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG} || {
+            echo "Pull failed or timed out, trying with authentication..."
+            if [ -n "${{ secrets.GITHUB_TOKEN }}" ]; then
+              echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+              timeout 300 docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}
+              docker logout ghcr.io
+            else
+              echo "No GitHub token available, retrying without auth..."
+              sleep 10
+              timeout 300 docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}
+            fi
+          }
           
           # Stop and remove existing container
           docker stop ${{ steps.target.outputs.container_name }} || true
