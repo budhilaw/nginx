@@ -1,0 +1,53 @@
+# Logs
+*.log
+logs/
+log/
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+
+# Backup files
+*.bak
+*.backup
+
+# SSL certificates (if any)
+*.pem
+*.key
+*.crt
+*.csr
+
+# Environment files
+.env
+.env.local
+.env.production
+.env.test
+
+# Docker
+.dockerignore
+
+# Cache
+.cache/ 
