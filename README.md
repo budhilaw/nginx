@@ -65,6 +65,7 @@ Set these in GitHub repository secrets:
 - `HOST` - Production server IP/hostname
 - `USERNAME` - SSH username
 - `SSH_KEY` - Private SSH key for deployment
+- `SSH_PORT` - Custom SSH port (if not using default port 22)
 
 ## Network Requirements
 

@@ -59,6 +59,7 @@ jobs:
         host: ${{ secrets.HOST }}
         username: ${{ secrets.USERNAME }}
         key: ${{ secrets.SSH_KEY }}
+        port: ${{ secrets.SSH_PORT }}
         script: |
           # Pull the latest image
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
@@ -66,6 +67,9 @@ jobs:
           # Stop and remove existing container
           docker stop nginx || true
           docker rm nginx || true
+          
+          # Create network if it doesn't exist
+          docker network create portfolio-network || true
           
           # Run new container
           docker run -d \
