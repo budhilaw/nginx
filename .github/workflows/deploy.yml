@@ -132,9 +132,6 @@ jobs:
         key: ${{ secrets.SSH_KEY }}
         port: ${{ steps.target.outputs.port }}
         script: |
-          # Login to GHCR (using a token with read:packages permission)
-          echo "${{ secrets.GHCR_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          
           # Determine image tag
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             IMAGE_TAG="${{ github.event.inputs.environment || 'latest' }}"
@@ -142,7 +139,7 @@ jobs:
             IMAGE_TAG="latest"
           fi
           
-          # Pull the latest image
+          # Pull the latest image (no auth needed for public packages)
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}
           
           # Stop and remove existing container
@@ -169,9 +166,6 @@ jobs:
           
           # Clean up old images
           docker image prune -f
-          
-          # Logout for security
-          docker logout ghcr.io
 
   notify:
     needs: [build, deploy]
