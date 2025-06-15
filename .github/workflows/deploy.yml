@@ -143,6 +143,18 @@ jobs:
           export DOCKER_CLI_HINTS=false
           export DOCKER_BUILDKIT=1
           
+          # Debug: Show Docker info and current login status
+          echo "=== Docker Debug Info ==="
+          docker version --format '{{.Client.Version}}'
+          echo "Current registry logins:"
+          cat ~/.docker/config.json 2>/dev/null || echo "No Docker config found"
+          
+          # Explicitly logout from all registries to avoid conflicts
+          echo "Clearing any existing Docker logins..."
+          docker logout || true
+          docker logout ghcr.io || true
+          docker logout docker.io || true
+          
           # Check if image exists locally first
           echo "Checking for existing image..."
           if docker images --format "table {{.Repository}}:{{.Tag}}" | grep -q "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}"; then
@@ -150,20 +162,16 @@ jobs:
             docker rmi ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG} || true
           fi
           
-          # Pull the latest image with timeout and retry
-          echo "Pulling image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}"
-          timeout 300 docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG} || {
-            echo "Pull failed or timed out, trying with authentication..."
-            if [ -n "${{ secrets.GITHUB_TOKEN }}" ]; then
-              echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-              timeout 300 docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}
-              docker logout ghcr.io
-            else
-              echo "No GitHub token available, retrying without auth..."
-              sleep 10
-              timeout 300 docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}
-            fi
-          }
+          # Login to GHCR explicitly (even for public repos to avoid Docker Hub confusion)
+          echo "Logging into GHCR..."
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          
+          # Pull the latest image with timeout
+          echo "Pulling image from GHCR: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}"
+          timeout 300 docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}
+          
+          # Logout from GHCR
+          docker logout ghcr.io
           
           # Stop and remove existing container
           docker stop ${{ steps.target.outputs.container_name }} || true
