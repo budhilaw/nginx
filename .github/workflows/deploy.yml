@@ -144,8 +144,8 @@ jobs:
           docker logout ghcr.io
           
           # Stop and remove existing container
-          docker stop ${{ steps.target.outputs.container_name }} || true
-          docker rm ${{ steps.target.outputs.container_name }} || true
+          docker stop nginx || true
+          docker rm nginx || true
           
           # Create network if it doesn't exist
           docker network create portfolio-network || true
